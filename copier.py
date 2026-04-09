@@ -429,7 +429,7 @@ class TradeCopier:
         last_exc: Optional[Exception] = None
         for attempt in range(1, 4):
             try:
-                return Info(base_url, skip_ws=True)
+                return Info(base_url, skip_ws=True, timeout=10)
             except Exception as e:
                 last_exc = e
                 if not self._is_rate_limit_error(e) or attempt == 3:
