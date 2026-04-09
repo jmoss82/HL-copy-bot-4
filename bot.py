@@ -57,6 +57,10 @@ class CopyBot:
         self.start_time: float = 0.0
         self.trades_executed: int = 0
 
+        # Exponential backoff on API rate limits (429s)
+        self._current_interval: float = config.poll_interval_seconds
+        self._max_backoff: float = 30.0
+
         # Coins locked at startup because the target already had them open.
         # We wait for the target to close before tracking these coins.
         self._startup_locked_coins: set = set()
@@ -161,6 +165,21 @@ class CopyBot:
             try:
                 # -- 1. Poll target ---------------------------------
                 target_positions = self.tracker.poll()
+
+                # Adjust polling speed based on rate-limit status
+                if self.tracker._consecutive_errors > 0:
+                    new_interval = min(self._current_interval * 2, self._max_backoff)
+                    if new_interval != self._current_interval:
+                        self._current_interval = new_interval
+                        logger.warning(
+                            f"Rate-limited (429) - backing off to {self._current_interval:.0f}s polling"
+                        )
+                elif self._current_interval > self.config.poll_interval_seconds:
+                    logger.info(
+                        f"API recovered - resuming {self.config.poll_interval_seconds}s polling"
+                    )
+                    self._current_interval = self.config.poll_interval_seconds
+
                 filtered = self._filter_coins(target_positions)
 
                 # -- 2. Diff ----------------------------------------
@@ -246,7 +265,7 @@ class CopyBot:
                     last_heartbeat = now
 
                 # -- 5. Sleep ---------------------------------------
-                await asyncio.sleep(self.config.poll_interval_seconds)
+                await asyncio.sleep(self._current_interval)
 
             except Exception as e:
                 logger.error(f"Main-loop error: {e}")
