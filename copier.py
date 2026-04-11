@@ -377,6 +377,8 @@ class TradeCopier:
                         tsz = float(fill.get("totalSz", 0))
                         oid = fill.get("oid", 0)
                         self._trade_timestamps.append(now)
+                        signed_fill = tsz if is_buy else -tsz
+                        self._positions_cache[coin] = self._positions_cache.get(coin, 0.0) + signed_fill
                         self._positions_ts = 0.0
                         logger.success(
                             f"FILLED: {side} {tsz} {coin} @ ${self._fmt_price(avg)} "
