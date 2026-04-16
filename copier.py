@@ -70,6 +70,8 @@ class TradeCopier:
         self._positions_ts: float = 0.0
         self._mids_cache: Dict[str, float] = {}
         self._mids_ts: float = 0.0
+        self._spot_ctx_px: Dict[str, float] = {}
+        self._spot_ctx_ts: float = 0.0
 
     # -- Lifecycle --------------------------------------------------
 
@@ -120,9 +122,7 @@ class TradeCopier:
             return self._our_equity
         try:
             state = self.info.user_state(self.query_address)
-            self._our_equity = float(
-                state.get("marginSummary", {}).get("accountValue", 0)
-            )
+            self._our_equity = self._resolve_account_equity(state)
             self._equity_ts = time.time()
         except Exception as e:
             logger.error(f"Failed to fetch our equity: {e}")
@@ -419,6 +419,77 @@ class TradeCopier:
         px = float(f"{px:.5g}")
         max_decimals = max(0, 6 - int(self._sz_decimals.get(coin, 5)))
         return round(px, max_decimals)
+
+    def _resolve_account_equity(self, perp_state: dict) -> float:
+        """
+        Resolve usable account equity.
+
+        For sub-accounts routed through account_address, HyperLiquid can keep the
+        principal USDC balance in spot state while perp user_state only reflects
+        posted margin plus PnL. In that case we value spot balances and add perp
+        unrealized PnL instead of relying on marginSummary.accountValue alone.
+        """
+        perp_equity = float(perp_state.get("marginSummary", {}).get("accountValue", 0))
+
+        acct = (self.config.account_address or "").lower()
+        signer = (self.config.wallet_address or "").lower()
+        if not acct or acct == signer:
+            return perp_equity
+
+        try:
+            spot_state = self.info.spot_user_state(self.query_address)
+            spot_value = self._spot_state_total_value(spot_state)
+            perp_upnl = sum(
+                float(entry.get("position", {}).get("unrealizedPnl", 0))
+                for entry in perp_state.get("assetPositions", [])
+            )
+
+            if spot_value <= 0:
+                return perp_equity
+
+            return spot_value + perp_upnl
+        except Exception as e:
+            logger.warning(
+                f"Could not resolve combined spot/perp equity; using perp equity only: {e}"
+            )
+            return perp_equity
+
+    def _spot_state_total_value(self, spot_state: dict) -> float:
+        """Mark spot balances to USD using spot asset contexts."""
+        self._refresh_spot_ctx_prices()
+        total_value = 0.0
+
+        for balance in spot_state.get("balances", []):
+            coin = balance.get("coin", "")
+            total = float(balance.get("total", 0))
+            if total <= 0:
+                continue
+
+            if coin == "USDC":
+                total_value += total
+                continue
+
+            px = self._spot_ctx_px.get(coin, 0.0)
+            if px > 0:
+                total_value += total * px
+
+        return total_value
+
+    def _refresh_spot_ctx_prices(self) -> None:
+        """Refresh spot asset prices periodically for spot balance valuation."""
+        if (time.time() - self._spot_ctx_ts) < 60 and self._spot_ctx_px:
+            return
+
+        _, asset_ctxs = self.info.spot_meta_and_asset_ctxs()
+        prices: Dict[str, float] = {}
+        for ctx in asset_ctxs:
+            coin = ctx.get("coin", "")
+            mark_px = float(ctx.get("markPx", 0) or 0)
+            if coin and mark_px > 0:
+                prices[coin] = mark_px
+
+        self._spot_ctx_px = prices
+        self._spot_ctx_ts = time.time()
 
     @staticmethod
     def _is_rate_limit_error(exc: Exception) -> bool:

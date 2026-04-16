@@ -4,6 +4,8 @@ This folder contains one of the live HyperLiquid copy-trading bots in this repos
 
 Like the other `copy-bot*` folders, it is a standalone bot instance with its own deployment and environment variables. The engine is shared, but the copied wallet, coin universe, and limits are configured independently.
 
+As of April 16, 2026, this bot is being moved from the main account onto HyperLiquid sub-account `SA2`.
+
 ## Important Context
 
 This README is meant to describe structure and runtime behavior. It should not be treated as a guaranteed snapshot of the exact live production settings.
@@ -14,6 +16,13 @@ For this bot, the source of truth is:
 2. the environment variables currently configured for this deployment
 
 That is especially important for values like `COPY_TARGET_ADDRESS`, `COPY_COINS`, leverage, notional caps, and dry-run status.
+
+Current rollout status:
+
+- Bot 4 is being reconfigured for sub-account `SA2`
+- a dedicated API wallet is being used as the signer
+- the initial rollout target is `BTC` only
+- the first deployment pass is intended to run in dry-run mode until signer/account routing and equity are confirmed
 
 ## Runtime Flow
 
@@ -55,6 +64,18 @@ The main variables are:
 | `COPY_DRY_RUN` | Simulated vs live execution |
 
 `.env.example` is a template and may not always match the exact live deployment settings.
+
+For sub-account deployments:
+
+- `HL_WALLET_ADDRESS` must be the address that matches `HL_PRIVATE_KEY`
+- `HL_ACCOUNT_ADDRESS` should be the sub-account or agent-wallet address you want this bot to trade on
+- if `HL_ACCOUNT_ADDRESS` is left blank, the bot trades on the signer wallet directly
+
+For the current Bot 4 deployment, the signer is an API wallet and `HL_ACCOUNT_ADDRESS` points to `SA2`.
+
+Do not include the `HL:` prefix that HyperLiquid sometimes shows in the UI when copying a sub-account address. Railway should store the raw `0x...` address.
+
+One important implementation detail for sub-accounts: HyperLiquid can expose capital partly in perp state and partly in spot balances while still using that capital for trading. Bot 4's equity calculation was updated in April 2026 so startup equity reflects combined sub-account value rather than just posted perp margin.
 
 ## Reconcile Modes
 
